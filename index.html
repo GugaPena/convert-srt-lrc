@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SRT ↔ LRT Editor</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    }
+    body {
+      background-color: #1e1e1e;
+      color: #f0f0f0;
+      padding: 16px;
+    }
+    h1 {
+      text-align: center;
+      margin-bottom: 16px;
+      font-size: 1.6em;
+    }
+    .toolbar {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .toolbar button {
+      padding: 6px 12px;
+      background: #333;
+      color: #fff;
+      border: 1px solid #555;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .toolbar button:hover {
+      background: #444;
+    }
+    .container {
+      display: flex;
+      gap: 20px;
+      height: calc(100vh - 180px);
+    }
+    .panel {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+    }
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+      font-weight: bold;
+      color: #4fc3f7;
+    }
+    .panel-header .actions {
+      display: flex;
+      gap: 6px;
+    }
+    .panel-header button {
+      width: 28px;
+      height: 24px;
+      font-size: 14px;
+      background: #333;
+      color: #ccc;
+      border: 1px solid #555;
+      border-radius: 3px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .panel-header button:hover {
+      background: #444;
+      color: #fff;
+    }
+    .editor-container {
+      position: relative;
+      flex: 1;
+      border: 1px solid #444;
+      border-radius: 6px;
+      overflow: hidden;
+      display: flex;
+    }
+    .line-numbers {
+      padding: 12px 8px;
+      background: #252526;
+      color: #858585;
+      text-align: right;
+      font-family: monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      user-select: none;
+    }
+    textarea {
+      flex: 1;
+      padding: 12px;
+      background-color: #2d2d2d;
+      color: #f0f0f0;
+      border: none;
+      resize: none;
+      font-family: monospace;
+      font-size: 14px;
+      line-height: 1.4;
+      outline: none;
+      tab-size: 4;
+    }
+    .valid-line {
+      background-color: #1e3a2a; /* verde escuro sutil */
+    }
+  </style>
+</head>
+<body>
+  <h1>SRT ↔ LRT Editor (Tempo Real)</h1>
+
+  <div class="toolbar">
+    <button id="clearBtn">Limpar Tudo</button>
+  </div>
+
+  <div class="container">
+    <!-- Painel SRT -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>SRT (entrada)</span>
+        <div class="actions">
+          <button id="copySrtBtn" title="Copiar SRT">📋</button>
+          <button id="saveSrtBtn" title="Salvar como .srt">💾</button>
+        </div>
+      </div>
+      <div class="editor-container">
+        <textarea id="srtInput" spellcheck="false" placeholder="Cole seu arquivo .srt aqui...">1
+00:00:14,600 --> 00:00:20,333
+Senhor, meu Deus, quando eu, maravilhado
+
+2
+00:00:21,600 --> 00:00:26,766
+Contemplo a Tua imensa criação
+
+3
+00:00:28,666 --> 00:00:34,100
+A terra e o mar, o céu todo estrelado
+
+4
+00:00:35,400 --> 00:00:40,800
+Me vêm falar da tua perfeição</textarea>
+      </div>
+    </div>
+
+    <!-- Painel LRT -->
+    <div class="panel">
+      <div class="panel-header">
+        <span>LRT (saída)</span>
+        <div class="actions">
+          <button id="copyLrtBtn" title="Copiar LRT">📋</button>
+          <button id="saveLrtBtn" title="Salvar como .lrt">💾</button>
+        </div>
+      </div>
+      <div class="editor-container">
+        <textarea id="lrtOutput" spellcheck="false" readonly placeholder="O LRT será gerado aqui..."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ========== Funções de conversão (mesmas do antes) ==========
+    function srtTimeToSeconds(timeStr) {
+      const [h, m, sMs] = timeStr.replace(',', '.').split(':');
+      return parseInt(h) * 3600 + parseInt(m) * 60 + parseFloat(sMs);
+    }
+
+    function secondsToMMSSfff(seconds) {
+      const totalMs = Math.round(seconds * 1000);
+      const minutes = Math.floor(totalMs / 60000);
+      const secondsPart = (totalMs % 60000) / 1000;
+      return `${String(minutes).padStart(2, '0')}:${secondsPart.toFixed(3).padStart(6, '0')}`;
+    }
+
+    function srtToLrtAndHighlight(srtText) {
+      const lines = srtText.split('\n');
+      const blocks = [];
+      let currentBlock = { start: '', end: '', textLines: [], lineIndices: [] };
+      const validLineIndices = new Set();
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i].trim();
+        if (line === '') {
+          if (currentBlock.start && currentBlock.textLines.length) {
+            blocks.push({ start: currentBlock.start, end: currentBlock.end, text: currentBlock.textLines.join(' ').trim() });
+            currentBlock.textLines.forEach((_, idx) => validLineIndices.add(currentBlock.lineIndices[idx]));
+          }
+          currentBlock = { start: '', end: '', textLines: [], lineIndices: [] };
+        } else if (/^\d+$/.test(line)) {
+          // número da legenda — não é válido para conteúdo
+          continue;
+        } else if (line.includes('-->')) {
+          const parts = line.split('-->');
+          currentBlock.start = parts[0].trim();
+          currentBlock.end = parts[1].trim().split(/\s+/)[0];
+          // a linha do timecode é considerada válida
+          validLineIndices.add(i);
+        } else if (currentBlock.start) {
+          currentBlock.textLines.push(lines[i]); // manter original (com espaços)
+          currentBlock.lineIndices.push(i);
+          validLineIndices.add(i);
+        }
+      }
+
+      // Último bloco
+      if (currentBlock.start && currentBlock.textLines.length) {
+        blocks.push({ start: currentBlock.start, end: currentBlock.end, text: currentBlock.textLines.join(' ').trim() });
+        currentBlock.textLines.forEach((_, idx) => validLineIndices.add(currentBlock.lineIndices[idx]));
+      }
+
+      // Gerar LRT
+      const lrtLines = [];
+      for (const block of blocks) {
+        if (!block.text) continue;
+        const startSec = srtTimeToSeconds(block.start);
+        const endSec = srtTimeToSeconds(block.end);
+        const words = block.text.split(/\s+/).filter(w => w !== '');
+        if (words.length === 0) continue;
+
+        let wordStarts, wordEnds;
+        if (words.length === 1) {
+          wordStarts = [startSec];
+          wordEnds = [endSec];
+        } else {
+          const step = (endSec - startSec) / words.length;
+          wordStarts = words.map((_, i) => startSec + i * step);
+          wordEnds = words.map((_, i) => startSec + (i + 1) * step);
+          wordEnds[wordEnds.length - 1] = endSec;
+        }
+
+        const lineStart = secondsToMMSSfff(startSec);
+        let lrtLine = `[${lineStart}]`;
+        for (let i = 0; i < words.length; i++) {
+          const t1 = secondsToMMSSfff(wordStarts[i]);
+          const t2 = secondsToMMSSfff(wordEnds[i]);
+          lrtLine += `<${t1}>${words[i]}<${t2}>`;
+          if (i < words.length - 1) lrtLine += ' ';
+        }
+        lrtLines.push(lrtLine);
+      }
+
+      return { lrt: lrtLines.join('\n'), validLineIndices };
+    }
+
+    // ========== Utilitários ==========
+    function downloadFile(content, filename) {
+      const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      setTimeout(() => {
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }, 0);
+    }
+
+    function copyToClipboard(text) {
+      navigator.clipboard.writeText(text).catch(err => {
+        console.error('Falha ao copiar:', err);
+        alert('Falha ao copiar para a área de transferência.');
+      });
+    }
+
+    function updateLineNumbers(textarea, lineNumbersDiv) {
+      const lines = textarea.value.split('\n').length;
+      lineNumbersDiv.textContent = Array.from({ length: lines }, (_, i) => i + 1).join('\n');
+    }
+
+    function applyLineHighlights(textarea, validIndices) {
+      // Não é possível estilizar linhas individuais em <textarea>,
+      // então vamos simular com um hack visual: atualizar o fundo via hint.
+      // Como não dá para colorir linhas no textarea, vamos pular essa parte visualmente,
+      // mas mantemos a lógica se precisar de canvas ou contenteditable no futuro.
+      // Por enquanto, apenas atualizamos números — o destaque "sutil" fica como info lógica.
+    }
+
+    // ========== Elementos ==========
+    const srtInput = document.getElementById('srtInput');
+    const lrtOutput = document.getElementById('lrtOutput');
+
+    // Botões
+    document.getElementById('copySrtBtn').addEventListener('click', () => copyToClipboard(srtInput.value));
+    document.getElementById('copyLrtBtn').addEventListener('click', () => copyToClipboard(lrtOutput.value));
+    document.getElementById('saveSrtBtn').addEventListener('click', () => downloadFile(srtInput.value, 'subtitles.srt'));
+    document.getElementById('saveLrtBtn').addEventListener('click', () => downloadFile(lrtOutput.value, 'subtitles.lrt'));
+    document.getElementById('clearBtn').addEventListener('click', () => {
+      srtInput.value = '';
+      lrtOutput.value = '';
+    });
+
+    // Atualiza LRT + linhas ao digitar
+    srtInput.addEventListener('input', () => {
+      const { lrt, validLineIndices } = srtToLrtAndHighlight(srtInput.value);
+      lrtOutput.value = lrt;
+    });
+
+    srtInput.dispatchEvent(new Event('input'));
+  </script>
+</body>
+</html>
